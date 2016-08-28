@@ -1,0 +1,409 @@
+/*
+ * Metric thread library
+ *
+ * Andre Lehnert - lehnert.andre@googlemail.com
+ *
+ * Version 1.0  2015-11-30 Abstraction modules added
+ * - metricThread(name="M3", height=10, internalThread=false) 
+ */
+
+
+// ---------------------------------------------------------------------------------
+
+// ++++++++++++++++++++++++++++++++++++
+// List of ISO 261 standard preferred threads
+// https://en.wikipedia.org/wiki/ISO_metric_screw_thread
+// - Name
+// - D (mm) Nominal diameter ISO 261
+// - P (mm) Pitch
+// ++++++++++++++++++++++++++++++++++++
+metricThreads = [
+	["M1", 1,  0.25],
+    ["M2", 2,  0.4],
+    ["M3", 3,  0.5],
+    ["M4", 4,  0.7],
+    ["M5", 5,  0.8],
+    ["M6", 6,  1],   
+    ["M8", 8,  1.25],   
+    ["M10", 10,  1.5],
+    ["M12", 12,  1.75],
+    ["M16", 16,  2],
+    ["M20", 20,  2.5],
+    ["M24", 24, 3],
+    ["M30", 30,  3.5],
+    ["M36", 36,  4],
+    ["M42", 42,  4.5],
+    ["M48", 48,  5],
+    ["M56", 56,  5.5],
+    ["M64", 64,  6],
+	["None", 0, 0]
+];
+
+
+
+// ---------------------------------------------------------------------------------
+
+/*
+ * ISO-standard metric threads, following this specification:
+ *          http://en.wikipedia.org/wiki/ISO_metric_screw_thread
+ *
+ * Dan Kirshner - dan_kirshner@yahoo.com
+ *
+ * You are welcome to make free use of this software.  Retention of my
+ * authorship credit would be appreciated.
+ *
+ * Version 1.6.  2015-09-01  Options: square threads, rectangular threads.
+ * Version 1.5.  2015-06-12  Options: thread_size, groove.
+ * Version 1.4.  2014-10-17  Use "faces" instead of "triangles" for polyhedron
+ * Version 1.3.  2013-12-01  Correct loop over turns -- don't have early cut-off
+ * Version 1.2.  2012-09-09  Use discrete polyhedra rather than linear_extrude ()
+ * Version 1.1.  2012-09-07  Corrected to right-hand threads!
+ */
+
+// Examples.
+//
+// Standard M8 x 1.
+ //metric_thread (diameter=8, pitch=1, length=4);
+
+// Square thread.
+// metric_thread (diameter=8, pitch=1, length=4, square=true);
+
+// Non-standard: long pitch, same thread size.
+//metric_thread (diameter=8, pitch=4, length=4, thread_size=1, groove=true);
+
+// Non-standard: 20 mm diameter, long pitch, square "trough" width 3 mm,
+// depth 1 mm.
+//metric_thread (diameter=20, pitch=8, length=16, square=true, thread_size=6, 
+//               groove=true, rectangle=0.333);
+
+// English: 1/4 x 20.
+//english_thread (diameter=1/4, threads_per_inch=20, length=1);
+
+// Thread for mounting on Rohloff hub.
+//difference () {
+//   cylinder (r=10, h=3, $fn=100);
+//    metric_thread (diameter=3, pitch=0.5, length=5, internal=true, n_starts=6);
+   //metric_thread (diameter=34, pitch=1, length=10, internal=true, n_starts=6);
+//}
+
+
+// ----------------------------------------------------------------------------
+function segments (diameter) = min (80, ceil (diameter*8));
+//function segments (diameter) = min (160, ceil (diameter*12));
+
+// ----------------------------------------------------------------------------
+// internal -    true = clearances for internal thread (e.g., a nut).
+//               false = clearances for external thread (e.g., a bolt).
+//               (Internal threads should be "cut out" from a solid using
+//               difference ()).
+// n_starts -    Number of thread starts (e.g., DNA, a "double helix," has
+//               n_starts=2).  See wikipedia Screw_thread.
+// thread_size - (non-standard) size of a single thread "V" - independent of
+//               pitch.  Default: same as pitch.
+// groove      - (non-standard) subtract inverted "V" from cylinder (rather than
+//               add protruding "V" to cylinder).
+// square      - Square threads (per 
+//               https://en.wikipedia.org/wiki/Square_thread_form).
+// rectangle   - (non-standard) "Rectangular" thread - ratio depth/width
+//               Default: 1 (square).
+module metric_thread 
+(
+    diameter=8, 
+    pitch=1, 
+    length=1, 
+    internal=false, 
+    n_starts=1,
+    thread_size=-1, 
+    groove=false, 
+    square=false, 
+    rectangle=0, 
+    tolerancePercent=0.3,
+    innerRadiusTolerance=0.0
+)
+{
+   // thread_size: size of thread "V" different than travel per turn (pitch).
+   // Default: same as pitch.
+   local_thread_size = thread_size == -1 ? pitch : thread_size;
+   local_rectangle = rectangle ? rectangle : 1;
+
+   n_segments = segments (diameter);
+   h = (square || rectangle) ? local_thread_size*local_rectangle/2 : local_thread_size * cos (30);
+
+   h_fac1 = (square || rectangle) ? 0.90 : 0.625;
+
+   // External thread includes additional relief.
+   h_fac2 = (square || rectangle) ? 0.95 : 5.3/8;
+
+   if (! groove) {
+      metric_thread_turns (diameter, pitch, length, internal, n_starts, 
+                           local_thread_size, groove, square, rectangle, tolerancePercent, innerRadiusTolerance);
+   }
+
+
+   // outer radius cylinder
+   // -> total width
+   difference () {
+
+      // Solid center, including Dmin truncation.
+      if (groove) {
+          
+         // -- ADDED TOLERANCE ---          
+         cylinder (r= internal ? diameter/2 * (1+ (tolerancePercent/3)) : diameter/2, h=length, $fn=n_segments * 3);
+          
+      } else if (internal) {
+          
+         cylinder (r=diameter/2 - h*h_fac1, h=length, $fn=n_segments);
+          
+      } else {
+
+         // External thread.
+         cylinder (r=diameter/2 - h*h_fac2, h=length, $fn=n_segments);
+      }
+
+      if (groove) {
+         metric_thread_turns (diameter, pitch, length, internal, n_starts, 
+                              local_thread_size, groove, square, rectangle, tolerancePercent, innerRadiusTolerance);
+      }
+   }
+}
+
+
+// ----------------------------------------------------------------------------
+module metric_thread_turns (diameter, pitch, length, internal, n_starts, 
+                            thread_size, groove, square, rectangle, tolerancePercent, innerRadiusTolerance, innerRadiusTolerance)
+{
+   // Number of turns needed.
+   n_turns = floor (length/pitch);
+
+   intersection () {
+
+      // Start one below z = 0.  Gives an extra turn at each end.
+      for (i=[-1*n_starts : n_turns+1]) {
+         translate ([0, 0, i*pitch]) {
+            metric_thread_turn (diameter, pitch, internal, n_starts, 
+                                thread_size, groove, square, rectangle, tolerancePercent, innerRadiusTolerance);
+         }
+      }
+
+      // Cut to length.
+      translate ([0, 0, length/2]) {
+         cube ([diameter*3, diameter*3, length], center=true);
+      }
+   }
+}
+
+
+// ----------------------------------------------------------------------------
+module metric_thread_turn (diameter, pitch, internal, n_starts, thread_size,
+                           groove, square, rectangle, tolerancePercent, 
+                            innerRadiusTolerance)
+{
+   n_segments = segments (diameter);
+   fraction_circle = 1.0/n_segments;
+   for (i=[0 : n_segments-1]) {
+      rotate ([0, 0, i*360*fraction_circle]) {
+         translate ([0, 0, i*n_starts*pitch*fraction_circle]) {
+             
+                         
+            thread_polyhedron (internal ? (diameter/2) * (1+tolerancePercent/5) : diameter/2, pitch, internal, n_starts, thread_size, groove, square, rectangle, tolerancePercent, innerRadiusTolerance);
+         }
+      }
+   }
+}
+
+
+
+// ----------------------------------------------------------------------------
+// z (see diagram) as function of current radius.
+// (Only good for first half-pitch.)
+function z_fct (current_radius, radius, pitch)
+   = 0.5* (current_radius - (radius - 0.875*pitch*cos (30)))
+                                                       /cos (30);
+
+// ----------------------------------------------------------------------------
+module thread_polyhedron (radius, pitch, internal, n_starts, thread_size,
+                          groove, square, rectangle, tolerancePercent = 0.7, 
+                          innerRadiusTolerance = 0.0)
+{
+   
+    
+    
+   n_segments = segments (radius*2);
+   fraction_circle = 1.0/n_segments;
+
+   local_rectangle = rectangle ? rectangle : 1;
+
+   h = (square || rectangle) ? thread_size*local_rectangle/2 : thread_size * cos (30);
+   // DKTMP - check
+    
+   // -- ADDED TOLERANCE --- 
+   outer_r = radius + (internal ? (h/2) : 0) ; // Adds internal relief. 
+    
+   if (internal) {
+       outer_r = ( radius + (internal ? h/2  : 0) ) * (1+tolerancePercent) ;
+   }   
+   
+   //echo (str ("outer_r: ", outer_r));
+
+   // A little extra on square thread -- make sure overlaps cylinder.
+   h_fac1 = (square || rectangle) ? 1.1 : 0.875;
+    
+   // -- ADDED TOLERANCE ---
+   inner_r = ( radius - h*h_fac1 + (1 * innerRadiusTolerance) ); // Does NOT do Dmin_truncation - do later with cylinder. 
+    
+   if (internal) {
+       inner_r = ( radius - h*h_fac1 ) * (1-tolerancePercent);
+   } 
+  
+   
+   
+   translate_y = groove ? outer_r + inner_r : 0;
+   //echo (str ("translate_y: ", translate_y)); 
+    
+   reflect_x   = groove ? 1 : 0;
+
+   // Make these just slightly bigger (keep in proportion) so polyhedra will
+   // overlap.
+   x_incr_outer = (! groove ? outer_r : inner_r) * fraction_circle * 2 * PI * 1.005;
+   x_incr_inner = (! groove ? inner_r : outer_r) * fraction_circle * 2 * PI * 1.005;
+   
+   // -- ADDED TOLERANCE ---
+   z_incr = n_starts * pitch * fraction_circle * 1.005;
+   
+   if (internal) {
+       z_incr = n_starts * pitch * fraction_circle * 1.005;
+   } 
+   //echo (str ("z_incr: ", z_incr));
+   
+   /*
+    (angles x0 and x3 inner are actually 60 deg)
+
+                          /\  (x2_inner, z2_inner) [2]
+                         /  \
+   (x3_inner, z3_inner) /    \
+                  [3]   \     \
+                        |\     \ (x2_outer, z2_outer) [6]
+                        | \    /
+                        |  \  /|
+             z          |[7]\/ / (x1_outer, z1_outer) [5]
+             |          |   | /
+             |   x      |   |/
+             |  /       |   / (x0_outer, z0_outer) [4]
+             | /        |  /     (behind: (x1_inner, z1_inner) [1]
+             |/         | /
+    y________|          |/
+   (r)                  / (x0_inner, z0_inner) [0]
+
+   */
+
+   x1_outer = outer_r * fraction_circle * 2 * PI ;
+   if (internal) {
+       x1_outer = (outer_r * fraction_circle * 2 * PI) * (1+tolerancePercent);
+   }  
+   //echo (str ("x1_outer: ", x1_outer));
+   
+   z0_outer = z_fct (outer_r, radius, thread_size);   
+
+   if (internal) {
+       z0_outer = z_fct (outer_r, radius, thread_size) * (1+tolerancePercent); 
+   } 
+   //echo (str ("z0_outer: ", z0_outer));
+   
+   //polygon ([[inner_r, 0], [outer_r, z0_outer], 
+   //        [outer_r, 0.5*pitch], [inner_r, 0.5*pitch]]);
+           
+   z1_outer = z0_outer + z_incr ;
+   
+   if (internal) {
+       z1_outer = z0_outer + z_incr * (1+tolerancePercent); 
+   }  
+   //echo (str ("z1_outer: ", z1_outer));
+   
+   
+   // Give internal square threads some clearance in the z direction, too.
+   // -- ADDED TOLERANCE ---
+   bottom = internal ? 0.235 * (1-tolerancePercent) : 0.25 ;
+   top    = internal ? 0.765 * (1-tolerancePercent) : 0.75;
+
+   translate ([0, translate_y, 0]) {
+      mirror ([reflect_x, 0, 0]) {
+
+         if (square || rectangle) {
+
+            // Rule for face ordering: look at polyhedron from outside: points must
+            // be in clockwise order.
+             
+           
+            polyhedron (
+               points = [
+                         [-x_incr_inner/2, -inner_r, bottom*thread_size],         // [0]
+                         [x_incr_inner/2, -inner_r, bottom*thread_size + z_incr], // [1]
+                         [x_incr_inner/2, -inner_r, top*thread_size + z_incr],    // [2]
+                         [-x_incr_inner/2, -inner_r, top*thread_size],            // [3]
+
+                         [-x_incr_outer/2, -outer_r, bottom*thread_size],         // [4]
+                         [x_incr_outer/2, -outer_r, bottom*thread_size + z_incr], // [5]
+                         [x_incr_outer/2, -outer_r, top*thread_size + z_incr],    // [6]
+                         [-x_incr_outer/2, -outer_r, top*thread_size]             // [7]
+                        ],
+
+               faces = [
+                         [0, 3, 7, 4],  // This-side trapezoid
+
+                         [1, 5, 6, 2],  // Back-side trapezoid
+
+                         [0, 1, 2, 3],  // Inner rectangle
+
+                         [4, 7, 6, 5],  // Outer rectangle
+
+                         // These are not planar, so do with separate triangles.
+                         [7, 2, 6],     // Upper rectangle, bottom
+                         [7, 3, 2],     // Upper rectangle, top
+
+                         [0, 5, 1],     // Lower rectangle, bottom
+                         [0, 4, 5]      // Lower rectangle, top
+                        ]
+            );
+         } else {
+
+            // Rule for face ordering: look at polyhedron from outside: points must
+            // be in clockwise order.
+             
+          
+             
+            polyhedron (
+               points = [
+                         [-x_incr_inner/2, -inner_r, 0],                        // [0]
+                         [x_incr_inner/2, -inner_r, z_incr],                    // [1]
+                         [x_incr_inner/2, -inner_r, thread_size + z_incr],      // [2]
+                         [-x_incr_inner/2, -inner_r, thread_size],              // [3]
+
+                         [-x_incr_outer/2, -outer_r, z0_outer],                 // [4]
+                         [x_incr_outer/2, -outer_r, z0_outer + z_incr],         // [5]
+                         [x_incr_outer/2, -outer_r, thread_size - z0_outer + z_incr], // [6]
+                         [-x_incr_outer/2, -outer_r, thread_size - z0_outer]    // [7]
+                        ],
+
+               faces = [
+                         [0, 3, 7, 4],  // This-side trapezoid
+
+                         [1, 5, 6, 2],  // Back-side trapezoid
+
+                         [0, 1, 2, 3],  // Inner rectangle
+
+                         [4, 7, 6, 5],  // Outer rectangle
+
+                         // These are not planar, so do with separate triangles.
+                         [7, 2, 6],     // Upper rectangle, bottom
+                         [7, 3, 2],     // Upper rectangle, top
+
+                         [0, 5, 1],     // Lower rectangle, bottom
+                         [0, 4, 5]      // Lower rectangle, top
+                        ]
+            );
+         }
+      }
+   }
+}
+
+
